@@ -1,0 +1,315 @@
+#!/usr/bin/env node
+// Rex hints: hint letters over the URLs, paths, hashes, UUIDs and IPs on a
+// pane's screen; type a hint, then c copy, o open, e edit (ec in a split),
+// t edit in a tab, m move (a click). Mode "jump" is ace-jump: a word's first
+// character, then its hint. Runs in a floating Rex pane; see README.md.
+// Usage: hints SESSION BLOCK ZOOMED(1|0) [jump]. Tests: node --test hints.test.js
+const path = require("node:path");
+const os = require("node:os");
+const { execFileSync } = require("node:child_process");
+
+// Lower priority wins where matches overlap (as in herdr-app-pluck).
+const PATTERNS = [
+  ["url", 10, /(?:https?|file):\/\/[^\s()"'<>`]+/gu],
+  ["path", 20, /[.\p{L}\p{M}\p{N}_\-~@]*(?:\/[.\p{L}\p{M}\p{N}_\-@]+)+\/?(?::\d+(?::\d+)?)?/gu],
+  ["uuid", 30, /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/gu],
+  ["hash", 40, /\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gu],
+  ["ipv4", 50, /\b\d{1,3}(?:\.\d{1,3}){3}\b/gu],
+];
+const TRAILING = /[.,;:!?)\]}>'"`]+$/u;
+const ALPHABET = "asdfghjklqwertyuiopzxcvbnm";
+const WIDE = [[0x1100, 0x115f], [0x2e80, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f],
+  [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd]];
+
+// shortcut: approximate width table; upgrade if hints drift on other glyphs.
+function cellWidth(ch) {
+  if (/\p{M}|‍|️/u.test(ch)) return 0;
+  const cp = ch.codePointAt(0);
+  if (/\p{Emoji_Presentation}/u.test(ch) || WIDE.some(([a, b]) => cp >= a && cp <= b)) return 2;
+  return 1;
+}
+
+const cells = (s) => [...s].reduce((n, ch) => n + cellWidth(ch), 0);
+
+function findItems(lines) {
+  const items = [];
+  lines.forEach((line, row) => {
+    const found = [];
+    for (const [kind, priority, re] of PATTERNS) {
+      for (const m of line.matchAll(re)) {
+        const text = m[0].replace(TRAILING, "");
+        if (text && (kind !== "path" || text.includes("/"))) found.push({ kind, priority, start: m.index, end: m.index + text.length, text });
+      }
+    }
+    found.sort((a, b) => a.priority - b.priority || a.start - b.start);
+    const kept = [];
+    for (const f of found) if (!kept.some((k) => f.start < k.end && k.start < f.end)) kept.push(f);
+    for (const k of kept) items.push({ row, col: cells(line.slice(0, k.start)), text: k.text, kind: k.kind });
+  });
+  return items.sort((a, b) => a.row - b.row || a.col - b.col);
+}
+
+function assignHints(items) {
+  const order = [...items].sort((a, b) => b.row - a.row || a.col - b.col).slice(0, ALPHABET.length ** 2);
+  const two = order.length > ALPHABET.length;
+  return order.map((item, i) => ({
+    ...item,
+    hint: two ? ALPHABET[Math.floor(i / ALPHABET.length)] + ALPHABET[i % ALPHABET.length] : ALPHABET[i],
+  }));
+}
+
+const ACTIONS = [["c", "copy"], ["o", "open"], ["e", "edit"], ["t", "tab"], ["m", "move"]];
+const FITS = { url: "com", path: "coetm", uuid: "cm", hash: "cm", ipv4: "cm", word: "m" };
+
+function actionsFor(item) {
+  return ACTIONS.filter(([key]) => FITS[item.kind].includes(key)).map(([key, name]) => ({ key, name }));
+}
+
+function parseTarget(text, cwd, home) {
+  const m = text.match(/:(\d+)(?::(\d+))?$/);
+  let file = m ? text.slice(0, m.index) : text;
+  if (file.startsWith("~/")) file = path.join(home, file.slice(2));
+  const target = { file: path.resolve(cwd, file) };
+  if (m) target.line = Number(m[1]);
+  if (m && m[2]) target.col = Number(m[2]);
+  return target;
+}
+
+// The visible screen: the text format drops blank rows at the bottom of the
+// screen, so count them from the VT tail's closing CRLFs.
+function visibleScreen(textTail, vtTail, rows, truncated) {
+  let lines = textTail.split("\n");
+  if (truncated) lines = lines.slice(1);
+  const vt = vtTail.replace(/(?<!\r)\n$/, "").replace(/(\x1b\[[0-9;?]*[A-Za-z])+$/, "");
+  const blank = vt.match(/(?:\r\n)*$/)[0].length / 2;
+  return lines.concat(Array(blank).fill("")).slice(-rows);
+}
+
+// Items the picker shows: within its last `rows` lines and its `cols` cells.
+function visibleItems(items, lineCount, cols, rows) {
+  const first = Math.max(0, lineCount - rows);
+  return items.filter((i) => i.row >= first && i.col + cells(i.text) <= cols);
+}
+
+function decodeKeys(chunk) {
+  const keys = [];
+  for (let i = 0; i < chunk.length; i++) {
+    const c = chunk[i];
+    if (c === "\x1b" && chunk[i + 1] === "[") {
+      i += 2;
+      while (i < chunk.length && !/[@-~]/.test(chunk[i])) i++;
+    } else if (c === "\x1b" && chunk[i + 1] === "O") i++;
+    else if (c === "\x1b" || c === "\x03") keys.push("escape");
+    else if (c === "\r") keys.push("enter");
+    else if (c === "\x7f" || c === "\b") keys.push("backspace");
+    else if (/[a-z]/i.test(c)) keys.push(c.toLowerCase());
+    else if (/[0-9_]/.test(c)) keys.push(c); // a word's first character in jump mode
+  }
+  return keys;
+}
+
+const initialState = (items) => ({ items, typed: "", picked: null, done: null });
+
+// Jump mode (ace-jump): words starting with a character, case-insensitive.
+const WORD = /[\p{L}\p{M}\p{N}_]+/gu;
+function findWords(lines, ch) {
+  const items = [];
+  lines.forEach((line, row) => {
+    for (const m of line.matchAll(WORD)) {
+      if (m[0][0].toLowerCase() === ch) items.push({ row, col: cells(line.slice(0, m.index)), text: m[0], kind: "word" });
+    }
+  });
+  return items;
+}
+
+const prepareJump = (lines, cols, rows) => ({
+  ...initialState([]), mode: "jump", query: null, notice: "",
+  words: (ch) => assignHints(visibleItems(findWords(lines, ch), lines.length, cols, rows)),
+});
+
+function step(state, key) {
+  if (key === "escape") return { ...state, done: { action: "cancel" } };
+  if (state.mode === "jump" && state.query === null) {
+    if (!/^[a-z0-9_]$/.test(key)) return state;
+    const items = state.words(key);
+    if (items.length === 1) return { ...state, done: { action: "move", item: items[0] } };
+    if (!items.length) return { ...state, notice: ` No words start with “${key}”; type another, esc cancels` };
+    return { ...state, query: key, items, notice: "" };
+  }
+  if (state.mode === "jump" && key === "backspace" && !state.typed) return { ...state, query: null, items: [] };
+  if (!state.items.length) return { ...state, done: { action: "cancel" } };
+  const pick = (typed) => {
+    const picked = state.items.find((i) => i.hint === typed) ?? null;
+    if (picked && state.mode === "jump") return { ...state, typed, picked, done: { action: "move", item: picked } };
+    return { ...state, typed, picked };
+  };
+  if (key === "backspace") return pick(state.typed.slice(0, -1));
+  if (state.picked) {
+    const name = key === "enter" ? "copy" : actionsFor(state.picked).find((a) => a.key === key)?.name;
+    return name ? { ...state, done: { action: name, item: state.picked } } : state;
+  }
+  if (!/^[a-z]$/.test(key)) return state;
+  const typed = state.typed + key;
+  return state.items.some((i) => i.hint.startsWith(typed)) ? pick(typed) : state;
+}
+
+const rgb = (hex, bg) => `\x1b[${bg ? 48 : 38};2;${parseInt(hex.slice(1, 3), 16)};${parseInt(hex.slice(3, 5), 16)};${parseInt(hex.slice(5, 7), 16)}m`;
+const RESET = "\x1b[0m"; // each style starts from a reset, so a hint's background and bold never run on
+const DIM = RESET + rgb("#6c7086"), MATCH = RESET + rgb("#cdd6f4"), HINT = RESET + "\x1b[1m" + rgb("#000000") + rgb("#ffd60a", true);
+const PICKED = RESET + rgb("#ffd60a") + rgb("#3d3200", true); // the picked item: muted, the hint letters stay bright
+const MENU = { copy: "copy c/⏎", open: "open o", edit: "edit e", tab: "tab t", move: "move m" };
+
+// One row: dim text, bright items, hint letters over an item's first cells.
+function renderRow(line, items, state, cols) {
+  let out = "", at = 0;
+  for (const ch of line) {
+    const w = cellWidth(ch);
+    if (at + w > cols) break;
+    const it = items.find((i) => at >= i.col && at < i.col + cells(i.text));
+    let style = DIM, text = ch;
+    if (it && state.picked === it) style = PICKED;
+    else if (it && it.hint.startsWith(state.typed) && !state.picked) {
+      const k = at - it.col;
+      if (k < it.hint.length) [style, text] = [HINT, it.hint[k]];
+      else style = MATCH;
+    }
+    out += style + text;
+    at += w;
+  }
+  return out + RESET;
+}
+
+function render(state, lines, cols, rows) {
+  const first = Math.max(0, lines.length - rows);
+  const shown = lines.slice(first);
+  while (shown.length < rows) shown.push("");
+  const out = shown.map((line, r) => renderRow(line, state.items.filter((i) => i.row === first + r), state, cols));
+  const note = (text) => HINT + text.slice(0, cols) + RESET;
+  if (!state.items.length && state.mode !== "jump") out[0] = note(" No items here — any key closes");
+  if (state.notice) out[rows - 1] = note(state.notice);
+  if (state.picked) {
+    const menu = actionsFor(state.picked).map((a) => MENU[a.name]).join(" · ");
+    out[rows - 1] = note(` ${menu}   esc cancel`);
+  }
+  return "\x1b[?7l\x1b[H\x1b[2J" + out.join("\r\n");
+}
+
+const run = (cmd, args, input) => execFileSync(cmd, args, { input, encoding: "utf8", maxBuffer: Infinity });
+
+// The last `bytes` of a pane's output, so huge scrollbacks are never read whole.
+// `format` answers with `content` (whole, or only its head plus a blob `id`);
+// `blob_read` answers with `data`.
+function readTail(call, format, bytes) {
+  const r = call("format", { format, max_bytes: bytes });
+  if (r.eof || r.id == null) return { text: r.content, truncated: false };
+  let offset = Math.max(0, r.total - bytes), text = "";
+  const truncated = offset > 0;
+  // Ask for the server's largest reply so the tail comes back in one piece: a
+  // tail that starts mid-character gets 3-byte U+FFFDs for 1-byte partials,
+  // which would end a smaller reply early and make the next offset drift.
+  // shortcut: tails over 983040 bytes still loop; only an enormous window gets there.
+  for (;;) {
+    const b = call("blob_read", { id: r.id, offset, max_bytes: 983040 });
+    text += b.data ?? "";
+    if (b.eof || !b.data) return { text, truncated };
+    offset += Buffer.byteLength(b.data);
+  }
+}
+// The picker's starting state: hints on the items a cols x rows picker shows.
+const prepare = (lines, cols, rows) =>
+  initialState(assignHints(visibleItems(findItems(lines), lines.length, cols, rows)));
+
+const SHELL = "com.superlogical.terminal.shell";
+
+// The chosen action. `exec` is swapped in tests.
+function runAction(action, item, ctx, exec = run) {
+  const api = (method, body) =>
+    exec("rex", ["api", "call", "-s", ctx.session, method, "-"], JSON.stringify({ session_id: ctx.session, ...body }));
+  if (action === "copy") return exec("pbcopy", [], item.text);
+  if (action === "move") {
+    for (const a of ["press", "release"]) {
+      api("block.event", { block_id: ctx.block, event: { type: "mouse", payload: { action: a, button: "left", x: item.col, y: item.row } } });
+    }
+    return;
+  }
+  if (action === "open") return exec("open", [item.kind === "url" ? item.text : parseTarget(item.text, ctx.cwd, ctx.home).file]);
+  // edit/tab: the owner's `ec` (a zsh function in zshrc.mac) through an interactive zsh.
+  const t = parseTarget(item.text, ctx.cwd, ctx.home);
+  const at = t.line ? [`+${t.line}${t.col ? `:${t.col}` : ""}`] : [];
+  const layout = { block: { flavor: SHELL, label: "ec", options: {
+    cwd: ctx.cwd, shell: "none", command: ["/bin/zsh", "-ic", 'ec "$@"', "ec", ...at, t.file], path_prepend: ["/opt/homebrew/bin"],
+  } } };
+  if (action === "edit") return api("session.new_split", { anchor_id: ctx.block, direction: "horizontal", side: "after", focus: true, layout });
+  if (action === "tab") return api("session.new_window", { focus: true, layout });
+}
+
+function main() {
+  const [session, block, zoomed, mode] = process.argv.slice(2);
+  const ctx = { session, block, cwd: process.cwd(), home: os.homedir() };
+  const { stdin, stdout: out } = process;
+  const call = (method, args) => JSON.parse(run("rex", ["block", "call", "-s", session, "-b", block, method, JSON.stringify(args ?? {})]));
+  const tail = (format, bytes) => readTail(call, format, bytes);
+  let state, lines, failing = false;
+  // Read the source screen and hint what this picker shows; again on resize,
+  // since Rex sizes the picker (and a zoomed source reflows) after it starts.
+  const load = () => {
+    const size = call("size");
+    const text = tail("text", size.rows * (size.columns * 4 + 1));
+    lines = visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated);
+    state = (mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows);
+  };
+  const restore = () => {
+    out.write("\x1b[?7h\x1b[?25h\x1b[?1049l");
+    if (stdin.isTTY) stdin.setRawMode(false);
+  };
+  // Errors stay on screen until a key; exit 0 so Rex doesn't keep a dead pane.
+  const fail = (e) => {
+    if (failing) return;
+    failing = true;
+    stdin.removeAllListeners("data");
+    out.write(`\x1b[?7h\x1b[H\x1b[2J hints: ${String(e?.message ?? e).trim()}\r\n any key closes`);
+    stdin.once("data", () => { restore(); process.exit(0); });
+  };
+  const draw = () => out.write(render(state, lines, out.columns, out.rows));
+  const finish = (done) => {
+    stdin.removeAllListeners("data");
+    if (done.action !== "cancel") runAction(done.action, done.item, ctx);
+    if (zoomed === "1" && !["edit", "tab"].includes(done.action)) {
+      run("rex", ["api", "call", "-s", session, "session.zoom_block", "-"], JSON.stringify({ session_id: session, block_id: block, zoom: true }));
+    }
+    restore();
+    process.exit(0);
+  };
+
+  process.on("uncaughtException", fail);
+  out.write("\x1b[?1049h\x1b[?25l");
+  stdin.setRawMode(true);
+  stdin.setEncoding("utf8");
+  stdin.resume();
+  try {
+    load();
+    draw();
+  } catch (e) {
+    return fail(e);
+  }
+  out.on("resize", () => { try { if (!failing) { load(); draw(); } } catch (e) { fail(e); } });
+  stdin.on("data", (chunk) => {
+    try {
+      for (const key of decodeKeys(chunk)) {
+        state = step(state, key);
+        if (state.done) return finish(state.done);
+      }
+      draw();
+    } catch (e) {
+      fail(e);
+    }
+  });
+}
+
+module.exports = {
+  findItems, cellWidth, assignHints, actionsFor, parseTarget,
+  visibleScreen, visibleItems, decodeKeys, initialState, step, render, runAction, readTail, prepare,
+  findWords, prepareJump,
+};
+
+if (require.main === module) main();
