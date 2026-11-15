@@ -64,16 +64,17 @@ function assignHints(items) {
 const ACTIONS = [["c", "copy"], ["o", "open"], ["e", "edit"], ["t", "tab"], ["m", "move"]];
 const FITS = { url: "com", path: "coetm", uuid: "cm", hash: "cm", ipv4: "cm", word: "m" };
 
-// What leaf (https://leaf.dipxsy.app) reads; it refuses anything else.
+// The files leaf (https://leaf.dipxsy.app) reads; it refuses anything else.
+// URLs stay with the browser, though leaf reads web pages too.
 // shortcut: leaf's pictures are "png, jpg, gif, webp, svg and more"; add a type here if one is missing.
 const LEAF_READS = /\.(pdf|epub|md|markdown|png|jpe?g|gif|webp|svg|bmp|tiff?|heic|avif)$/i;
 const isWeb = (item) => /^https?:\/\//.test(item.text ?? "");
-const forLeaf = (item) => isWeb(item) || (item.kind === "path" && LEAF_READS.test(item.text.replace(/(:\d+){1,2}$/, "")));
+const forLeaf = (item) => item.kind === "path" && LEAF_READS.test(item.text.replace(/(:\d+){1,2}$/, ""));
 
 // `where.remote`: the picker runs on the pane's machine, not the viewer's, so
 // macOS open would open there, out of sight. With leaf on this machine
-// (`where.leaf`), what it reads opens in a pane beside, which the viewer sees.
-// With the viewer's Rex address (`where.viewer`), web URLs open on the
+// (`where.leaf`), the files it reads open in a pane beside, which the viewer
+// sees. With the viewer's Rex address (`where.viewer`), web URLs open on the
 // viewer's machine. Other paths don't (the file is here).
 function actionsFor(item, where = {}) {
   const canOpen = !where.remote || (where.leaf && forLeaf(item)) || (where.viewer && isWeb(item));
@@ -251,8 +252,8 @@ function runAction(action, item, ctx, exec = run) {
   // leaf's own placing, as its Rex plugin does: typed at an idle prompt, in
   // place of a document leaf shows there, or else in a pane beside.
   if (action === "open" && ctx.leaf && forLeaf(item)) {
-    const target = item.kind === "url" ? item.text : parseTarget(item.text, ctx.cwd, ctx.home).file;
-    return exec(ctx.leaf, ["rex", "place", ctx.block, target.match(/([^/]+)$/)?.[1] ?? "leaf", "--", "open", target]);
+    const target = parseTarget(item.text, ctx.cwd, ctx.home).file;
+    return exec(ctx.leaf, ["rex", "place", ctx.block, path.basename(target), "--", "open", target]);
   }
   // The viewer's init.lua defines open_url (see README.md).
   if (action === "open" && ctx.viewer && isWeb(item)) return exec("rex", ["-S", ctx.viewer, "do", "open_url", "--args", JSON.stringify({ url: item.text })]);

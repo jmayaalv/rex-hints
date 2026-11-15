@@ -5,8 +5,8 @@ ace-jump style. No mouse needed to grab or reach what's on screen.
 
 - **Hints** (`shift+cmd+j`): every URL, file path (with `:LINE:COL`), git hash, UUID and
   IPv4 address on the focused pane gets a one- or two-letter hint. Type the hint, then:
-  `c` (or Enter) copy · `o` open (in [leaf](https://leaf.dipxsy.app) when it's installed and
-  reads the item: PDF, EPUB, Markdown, pictures, web URLs; otherwise the browser or macOS `open`) ·
+  `c` (or Enter) copy · `o` open (URLs in the browser; PDF, EPUB, Markdown and pictures in
+  [leaf](https://leaf.dipxsy.app) when it's installed; the rest with macOS `open`) ·
   `e` edit in Emacs in a split on the right · `t` edit in Emacs in a new tab ·
   `m` move (click there). The menu only offers what fits the item.
 - **Jump** (`ctrl+cmd+j`): ace-jump. Type a word's first character (any case), then the
@@ -21,9 +21,9 @@ scrollback still opens in about 300 ms.
 
 - Rex for macOS (tested with Preview 0.1.0 build 1853) and node 20+ (built-ins only).
 - macOS `pbcopy` and `open`.
-- Optional: [leaf](https://leaf.dipxsy.app) on `PATH`. Open then reads documents, pictures and
-  web pages in leaf, placed the way its Rex plugin does (at an idle prompt, or in a pane
-  beside).
+- Optional: [leaf](https://leaf.dipxsy.app) on `PATH`. Open then reads documents and pictures
+  in leaf, placed the way its Rex plugin does (at an idle prompt, or in a pane beside).
+  URLs still go to the browser.
 - For edit: a zsh function `ec` in your interactive shell that opens files in a terminal
   Emacs, e.g. `ec() { emacsclient -t "$@"; }`. It's called as `ec +LINE:COL FILE`.
 - Move and Jump send a mouse click, so they move the cursor in programs that take clicks
@@ -132,9 +132,9 @@ node --test hints.test.js
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
 - A pane on another Rex host runs the picker there, so the script must be installed there
   too, and its actions act on that machine: Copy runs its `pbcopy`, Edit opens its files.
-  Open uses leaf there when it's installed and reads the item; otherwise it sends http(s)
-  URLs back to your Mac through `open_url` (that host's `rex` must reach this server over
-  Tailscale) and is hidden for other paths.
+  Open reads documents and pictures in leaf there when it's installed, sends http(s) URLs
+  back to your Mac through `open_url` (that host's `rex` must reach this server over
+  Tailscale), and is hidden for other paths.
 
 ## License
 

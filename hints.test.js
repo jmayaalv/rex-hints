@@ -191,7 +191,8 @@ test("with leaf, open offers what leaf reads, on a remote pane too", () => {
   const remoteLeaf = { remote: true, leaf: true };
   assert.equal(keys("path", "docs/a.md:3", remoteLeaf), "c,o,e,t,m");
   assert.equal(keys("path", "paper.PDF", remoteLeaf), "c,o,e,t,m");
-  assert.equal(keys("url", "https://x.io", remoteLeaf), "c,o,m");
+  assert.equal(keys("url", "https://x.io", remoteLeaf), "c,m"); // URLs never go to leaf
+  assert.equal(keys("url", "https://x.io", { ...remoteLeaf, viewer: "https://v" }), "c,o,m");
   assert.equal(keys("path", "src/a.js", remoteLeaf), "c,e,t,m");
   assert.equal(keys("path", "src/a.js", { leaf: true }), "c,o,e,t,m");
 });
@@ -231,14 +232,14 @@ test("runAction open with a viewer asks the viewer's server to open the URL", ()
   assert.deepEqual(calls[0].slice(0, 2), ["rex", ["-S", "https://v", "do", "open_url", "--args", '{"url":"https://x.io/?a=1"}']]);
 });
 
-test("runAction open with leaf places what leaf reads beside the pane, the rest as before", () => {
+test("runAction open with leaf places the files leaf reads; URLs and the rest open as before", () => {
   const run = (it) => {
     const calls = [];
     h.runAction("open", it, { ...ctx, leaf: "/bin/leaf" }, (...c) => calls.push(c));
     return calls[0].slice(0, 2);
   };
   assert.deepEqual(run(item({ text: "docs/a.md:3" })), ["/bin/leaf", ["rex", "place", B, "a.md", "--", "open", "/r/docs/a.md"]]);
-  assert.deepEqual(run(item({ kind: "url", text: "https://x.io/post" })), ["/bin/leaf", ["rex", "place", B, "post", "--", "open", "https://x.io/post"]]);
+  assert.deepEqual(run(item({ kind: "url", text: "https://x.io/post" })), ["open", ["https://x.io/post"]]);
   assert.deepEqual(run(item({ text: "src/a.js" })), ["open", ["/r/src/a.js"]]);
 });
 
