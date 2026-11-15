@@ -171,19 +171,29 @@ test("render shows the menu on the last row once an item is picked", () => {
 });
 
 test("a pane on another machine offers no open: it would open there, out of sight", () => {
-  const keys = (kind) => h.actionsFor({ kind }, true).map((a) => a.key).join(",");
+  const keys = (kind) => h.actionsFor({ kind }, { remote: true }).map((a) => a.key).join(",");
   assert.equal(keys("url"), "c,m");
   assert.equal(keys("path"), "c,e,t,m");
-  const s = h.step({ ...h.initialState([item({ hint: "a" })]), remote: true }, "a");
+  const s = h.step({ ...h.initialState([item({ hint: "a" })]), where: { remote: true } }, "a");
   assert.equal(h.step(s, "o").done, null);
   assert.ok(!frameRows(h.render(s, ["src/a.js", "", ""], 60, 3))[2].includes("open"));
 });
 
 test("with the viewer's Rex address, a remote pane still opens URLs: on the viewer's machine", () => {
-  const keys = (kind, text) => h.actionsFor({ kind, text }, true, "https://viewer").map((a) => a.key).join(",");
+  const keys = (kind, text) => h.actionsFor({ kind, text }, { remote: true, viewer: "https://viewer" }).map((a) => a.key).join(",");
   assert.equal(keys("url", "https://x.io"), "c,o,m");
   assert.equal(keys("url", "file:///etc/hosts"), "c,m");
   assert.equal(keys("path", "src/a.js"), "c,e,t,m");
+});
+
+test("with leaf, open offers what leaf reads, on a remote pane too", () => {
+  const keys = (kind, text, where) => h.actionsFor({ kind, text }, where).map((a) => a.key).join(",");
+  const remoteLeaf = { remote: true, leaf: true };
+  assert.equal(keys("path", "docs/a.md:3", remoteLeaf), "c,o,e,t,m");
+  assert.equal(keys("path", "paper.PDF", remoteLeaf), "c,o,e,t,m");
+  assert.equal(keys("url", "https://x.io", remoteLeaf), "c,o,m");
+  assert.equal(keys("path", "src/a.js", remoteLeaf), "c,e,t,m");
+  assert.equal(keys("path", "src/a.js", { leaf: true }), "c,o,e,t,m");
 });
 
 test("render says when there is nothing to hint", () => {
@@ -219,6 +229,17 @@ test("runAction open with a viewer asks the viewer's server to open the URL", ()
   const calls = [];
   h.runAction("open", item({ kind: "url", text: "https://x.io/?a=1" }), { ...ctx, viewer: "https://v" }, (...c) => calls.push(c));
   assert.deepEqual(calls[0].slice(0, 2), ["rex", ["-S", "https://v", "do", "open_url", "--args", '{"url":"https://x.io/?a=1"}']]);
+});
+
+test("runAction open with leaf places what leaf reads beside the pane, the rest as before", () => {
+  const run = (it) => {
+    const calls = [];
+    h.runAction("open", it, { ...ctx, leaf: "/bin/leaf" }, (...c) => calls.push(c));
+    return calls[0].slice(0, 2);
+  };
+  assert.deepEqual(run(item({ text: "docs/a.md:3" })), ["/bin/leaf", ["rex", "place", B, "a.md", "--", "open", "/r/docs/a.md"]]);
+  assert.deepEqual(run(item({ kind: "url", text: "https://x.io/post" })), ["/bin/leaf", ["rex", "place", B, "post", "--", "open", "https://x.io/post"]]);
+  assert.deepEqual(run(item({ text: "src/a.js" })), ["open", ["/r/src/a.js"]]);
 });
 
 test("runAction edit opens ec in a split on the right, at the line", () => {

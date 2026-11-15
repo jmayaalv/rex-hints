@@ -8,6 +8,7 @@
 // machine. Tests: node --test hints.test.js
 const path = require("node:path");
 const os = require("node:os");
+const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 // Lower priority wins where matches overlap (as in herdr-app-pluck).
@@ -63,11 +64,19 @@ function assignHints(items) {
 const ACTIONS = [["c", "copy"], ["o", "open"], ["e", "edit"], ["t", "tab"], ["m", "move"]];
 const FITS = { url: "com", path: "coetm", uuid: "cm", hash: "cm", ipv4: "cm", word: "m" };
 
-// `remote`: the picker runs on the pane's machine, not the viewer's, so open
-// would open there, out of sight. With the viewer's Rex address (`viewer`),
-// URLs still open, on the viewer's machine; paths don't (the file is here).
-function actionsFor(item, remote, viewer) {
-  const canOpen = !remote || (viewer && /^https?:/.test(item.text ?? ""));
+// What leaf (https://leaf.dipxsy.app) reads; it refuses anything else.
+// shortcut: leaf's pictures are "png, jpg, gif, webp, svg and more"; add a type here if one is missing.
+const LEAF_READS = /\.(pdf|epub|md|markdown|png|jpe?g|gif|webp|svg|bmp|tiff?|heic|avif)$/i;
+const isWeb = (item) => /^https?:\/\//.test(item.text ?? "");
+const forLeaf = (item) => isWeb(item) || (item.kind === "path" && LEAF_READS.test(item.text.replace(/(:\d+){1,2}$/, "")));
+
+// `where.remote`: the picker runs on the pane's machine, not the viewer's, so
+// macOS open would open there, out of sight. With leaf on this machine
+// (`where.leaf`), what it reads opens in a pane beside, which the viewer sees.
+// With the viewer's Rex address (`where.viewer`), web URLs open on the
+// viewer's machine. Other paths don't (the file is here).
+function actionsFor(item, where = {}) {
+  const canOpen = !where.remote || (where.leaf && forLeaf(item)) || (where.viewer && isWeb(item));
   return ACTIONS.filter(([key]) => FITS[item.kind].includes(key) && (key !== "o" || canOpen))
     .map(([key, name]) => ({ key, name }));
 }
@@ -152,7 +161,7 @@ function step(state, key) {
   };
   if (key === "backspace") return pick(state.typed.slice(0, -1));
   if (state.picked) {
-    const name = key === "enter" ? "copy" : actionsFor(state.picked, state.remote, state.viewer).find((a) => a.key === key)?.name;
+    const name = key === "enter" ? "copy" : actionsFor(state.picked, state.where).find((a) => a.key === key)?.name;
     return name ? { ...state, done: { action: name, item: state.picked } } : state;
   }
   if (!/^[a-z]$/.test(key)) return state;
@@ -195,7 +204,7 @@ function render(state, lines, cols, rows) {
   if (!state.items.length && state.mode !== "jump") out[0] = note(" No items here — any key closes");
   if (state.notice) out[rows - 1] = note(state.notice);
   if (state.picked) {
-    const menu = actionsFor(state.picked, state.remote, state.viewer).map((a) => MENU[a.name]).join(" · ");
+    const menu = actionsFor(state.picked, state.where).map((a) => MENU[a.name]).join(" · ");
     out[rows - 1] = note(` ${menu}   esc cancel`);
   }
   return "\x1b[?7l\x1b[H\x1b[2J" + out.join("\r\n");
@@ -239,8 +248,14 @@ function runAction(action, item, ctx, exec = run) {
     }
     return;
   }
+  // leaf's own placing, as its Rex plugin does: typed at an idle prompt, in
+  // place of a document leaf shows there, or else in a pane beside.
+  if (action === "open" && ctx.leaf && forLeaf(item)) {
+    const target = item.kind === "url" ? item.text : parseTarget(item.text, ctx.cwd, ctx.home).file;
+    return exec(ctx.leaf, ["rex", "place", ctx.block, target.match(/([^/]+)$/)?.[1] ?? "leaf", "--", "open", target]);
+  }
   // The viewer's init.lua defines open_url (see README.md).
-  if (action === "open" && ctx.viewer) return exec("rex", ["-S", ctx.viewer, "do", "open_url", "--args", JSON.stringify({ url: item.text })]);
+  if (action === "open" && ctx.viewer && isWeb(item)) return exec("rex", ["-S", ctx.viewer, "do", "open_url", "--args", JSON.stringify({ url: item.text })]);
   if (action === "open") return exec("open", [item.kind === "url" ? item.text : parseTarget(item.text, ctx.cwd, ctx.home).file]);
   // edit/tab: the owner's `ec` (a zsh function in zshrc.mac) through an interactive zsh.
   const t = parseTarget(item.text, ctx.cwd, ctx.home);
@@ -256,7 +271,9 @@ function main() {
   const [session, block, zoomed, mode, where] = process.argv.slice(2);
   const remote = Boolean(where) && where !== "local";
   const viewer = remote && where !== "remote" ? where : undefined;
-  const ctx = { session, block, cwd: process.cwd(), home: os.homedir(), viewer };
+  const leaf = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, "leaf"))
+    .find((file) => { try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; } });
+  const ctx = { session, block, cwd: process.cwd(), home: os.homedir(), viewer, leaf };
   const { stdin, stdout: out } = process;
   const call = (method, args) => JSON.parse(run("rex", ["block", "call", "-s", session, "-b", block, method, JSON.stringify(args ?? {})]));
   const tail = (format, bytes) => readTail(call, format, bytes);
@@ -267,7 +284,7 @@ function main() {
     const size = call("size");
     const text = tail("text", size.rows * (size.columns * 4 + 1));
     lines = visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated);
-    state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows), remote, viewer };
+    state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows), where: { remote, viewer, leaf: Boolean(leaf) } };
   };
   const restore = () => {
     out.write("\x1b[?7h\x1b[?25h\x1b[?1049l");
@@ -285,7 +302,8 @@ function main() {
   const finish = (done) => {
     stdin.removeAllListeners("data");
     if (done.action !== "cancel") runAction(done.action, done.item, ctx);
-    if (zoomed === "1" && !["edit", "tab"].includes(done.action)) {
+    const newPane = ["edit", "tab"].includes(done.action) || (done.action === "open" && leaf && forLeaf(done.item));
+    if (zoomed === "1" && !newPane) {
       run("rex", ["api", "call", "-s", session, "session.zoom_block", "-"], JSON.stringify({ session_id: session, block_id: block, zoom: true }));
     }
     restore();
