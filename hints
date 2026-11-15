@@ -3,7 +3,8 @@
 // pane's screen; type a hint, then c copy, o open, e edit (ec in a split),
 // t edit in a tab, m move (a click). Mode "jump" is ace-jump: a word's first
 // character, then its hint. Runs in a floating Rex pane; see README.md.
-// Usage: hints SESSION BLOCK ZOOMED(1|0) [jump]. Tests: node --test hints.test.js
+// Usage: hints SESSION BLOCK ZOOMED(1|0) [items|jump] [local|remote], remote when
+// the viewer's Rex app is on another machine. Tests: node --test hints.test.js
 const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
@@ -61,8 +62,11 @@ function assignHints(items) {
 const ACTIONS = [["c", "copy"], ["o", "open"], ["e", "edit"], ["t", "tab"], ["m", "move"]];
 const FITS = { url: "com", path: "coetm", uuid: "cm", hash: "cm", ipv4: "cm", word: "m" };
 
-function actionsFor(item) {
-  return ACTIONS.filter(([key]) => FITS[item.kind].includes(key)).map(([key, name]) => ({ key, name }));
+// `remote`: the picker runs on the pane's machine, not the viewer's, so open
+// would open there, out of sight; it isn't offered.
+function actionsFor(item, remote) {
+  return ACTIONS.filter(([key]) => FITS[item.kind].includes(key) && !(remote && key === "o"))
+    .map(([key, name]) => ({ key, name }));
 }
 
 function parseTarget(text, cwd, home) {
@@ -145,7 +149,7 @@ function step(state, key) {
   };
   if (key === "backspace") return pick(state.typed.slice(0, -1));
   if (state.picked) {
-    const name = key === "enter" ? "copy" : actionsFor(state.picked).find((a) => a.key === key)?.name;
+    const name = key === "enter" ? "copy" : actionsFor(state.picked, state.remote).find((a) => a.key === key)?.name;
     return name ? { ...state, done: { action: name, item: state.picked } } : state;
   }
   if (!/^[a-z]$/.test(key)) return state;
@@ -188,7 +192,7 @@ function render(state, lines, cols, rows) {
   if (!state.items.length && state.mode !== "jump") out[0] = note(" No items here — any key closes");
   if (state.notice) out[rows - 1] = note(state.notice);
   if (state.picked) {
-    const menu = actionsFor(state.picked).map((a) => MENU[a.name]).join(" · ");
+    const menu = actionsFor(state.picked, state.remote).map((a) => MENU[a.name]).join(" · ");
     out[rows - 1] = note(` ${menu}   esc cancel`);
   }
   return "\x1b[?7l\x1b[H\x1b[2J" + out.join("\r\n");
@@ -244,7 +248,7 @@ function runAction(action, item, ctx, exec = run) {
 }
 
 function main() {
-  const [session, block, zoomed, mode] = process.argv.slice(2);
+  const [session, block, zoomed, mode, where] = process.argv.slice(2);
   const ctx = { session, block, cwd: process.cwd(), home: os.homedir() };
   const { stdin, stdout: out } = process;
   const call = (method, args) => JSON.parse(run("rex", ["block", "call", "-s", session, "-b", block, method, JSON.stringify(args ?? {})]));
@@ -256,7 +260,7 @@ function main() {
     const size = call("size");
     const text = tail("text", size.rows * (size.columns * 4 + 1));
     lines = visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated);
-    state = (mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows);
+    state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows), remote: where === "remote" };
   };
   const restore = () => {
     out.write("\x1b[?7h\x1b[?25h\x1b[?1049l");

@@ -170,6 +170,15 @@ test("render shows the menu on the last row once an item is picked", () => {
   assert.ok(rows[2].startsWith(" copy c/⏎"), rows[2]);
 });
 
+test("a pane on another machine offers no open: it would open there, out of sight", () => {
+  const keys = (kind) => h.actionsFor({ kind }, true).map((a) => a.key).join(",");
+  assert.equal(keys("url"), "c,m");
+  assert.equal(keys("path"), "c,e,t,m");
+  const s = h.step({ ...h.initialState([item({ hint: "a" })]), remote: true }, "a");
+  assert.equal(h.step(s, "o").done, null);
+  assert.ok(!frameRows(h.render(s, ["src/a.js", "", ""], 60, 3))[2].includes("open"));
+});
+
 test("render says when there is nothing to hint", () => {
   assert.equal(frameRows(h.render(h.initialState([]), ["plain text"], 60, 3))[0], " No items here — any key closes");
 });

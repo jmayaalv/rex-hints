@@ -48,6 +48,12 @@ local function find_rect(node, id)
   if node.split then return find_rect(node.split.before, id) or find_rect(node.split.after, id) end
 end
 
+-- Whether the app that ran the action is on another machine (a local app is a "peer").
+local function on_other_machine(ctx)
+  local c = ctx.client_id and rex.call("client.inspect", { client_id = ctx.client_id })
+  return c ~= nil and c.client.principal.kind ~= "peer"
+end
+
 -- The picker over ctx's pane; mode "jump" is the ace-jump variant.
 local function open_hints(ctx, mode)
   local view, err = rex.session.view{}
@@ -67,7 +73,8 @@ local function open_hints(ctx, mode)
             options = {
               cwd          = pane_folder(ctx),
               command      = { os.getenv("HOME") .. "/.config/rex/hints", ctx.session_id, ctx.block_id,
-                               w.zoomed_block_id == ctx.block_id and "1" or "0", mode },
+                               w.zoomed_block_id == ctx.block_id and "1" or "0", mode,
+                               on_other_machine(ctx) and "remote" or "local" },
               path_prepend = { "/opt/homebrew/bin" },  -- where node is
               size         = size.columns and { columns = size.columns, rows = size.rows } or nil,
             },
@@ -103,7 +110,9 @@ node --test hints.test.js
 - F1–F4 can type a hint letter; the menu row covers a picked item on the last row; hint
   letters are misdrawn over an item starting with a combining mark or a wide character;
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
-- This machine only: panes on another Rex host aren't supported.
+- A pane on another Rex host runs the picker there, so its actions act on that machine:
+  Open is hidden (it would open out of sight), Copy runs that machine's `pbcopy`, and
+  the script must be installed there too.
 
 ## License
 
