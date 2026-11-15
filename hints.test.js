@@ -179,6 +179,13 @@ test("a pane on another machine offers no open: it would open there, out of sigh
   assert.ok(!frameRows(h.render(s, ["src/a.js", "", ""], 60, 3))[2].includes("open"));
 });
 
+test("with the viewer's Rex address, a remote pane still opens URLs: on the viewer's machine", () => {
+  const keys = (kind, text) => h.actionsFor({ kind, text }, true, "https://viewer").map((a) => a.key).join(",");
+  assert.equal(keys("url", "https://x.io"), "c,o,m");
+  assert.equal(keys("url", "file:///etc/hosts"), "c,m");
+  assert.equal(keys("path", "src/a.js"), "c,e,t,m");
+});
+
 test("render says when there is nothing to hint", () => {
   assert.equal(frameRows(h.render(h.initialState([]), ["plain text"], 60, 3))[0], " No items here — any key closes");
 });
@@ -206,6 +213,12 @@ test("runAction copy puts the text on the clipboard", () => {
 test("runAction open: URLs as they are, paths resolved without :LINE", () => {
   assert.deepEqual(record("open", item({ kind: "url", text: "https://x.io" }))[0].slice(0, 2), ["open", ["https://x.io"]]);
   assert.deepEqual(record("open", item({ text: "src/a.js:3" }))[0].slice(0, 2), ["open", ["/r/src/a.js"]]);
+});
+
+test("runAction open with a viewer asks the viewer's server to open the URL", () => {
+  const calls = [];
+  h.runAction("open", item({ kind: "url", text: "https://x.io/?a=1" }), { ...ctx, viewer: "https://v" }, (...c) => calls.push(c));
+  assert.deepEqual(calls[0].slice(0, 2), ["rex", ["-S", "https://v", "do", "open_url", "--args", '{"url":"https://x.io/?a=1"}']]);
 });
 
 test("runAction edit opens ec in a split on the right, at the line", () => {

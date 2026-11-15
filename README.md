@@ -48,13 +48,29 @@ local function find_rect(node, id)
   if node.split then return find_rect(node.split.before, id) or find_rect(node.split.after, id) end
 end
 
--- Whether the app that ran the action is on another machine (a local app is a "peer").
-local function on_other_machine(ctx)
-  local c = ctx.client_id and rex.call("client.inspect", { client_id = ctx.client_id })
-  return c ~= nil and c.client.principal.kind ~= "peer"
+-- For panes on another Rex host: open_url opens a URL on this Mac, and the picker
+-- there calls it back at this server's Tailscale address (nil when Tailscale is off).
+rex.action{
+  name  = "open_url",
+  title = "Open URL on This Mac",
+  args  = { url = "string" },
+  run   = function(_, args)
+    if not args.url:match("^https?://") then error("open_url: only http(s) URLs", 0) end
+    local r, err = rex.exec({ "/usr/bin/open", args.url })
+    if r == nil then error(err, 0) end
+    if not r.ok then error(r.stderr, 0) end
+  end,
+}
+
+local function own_address()  -- the server's PATH has no rex; use its own CLI
+  local cli = os.getenv("HOME") .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex"
+  local r = rex.exec({ cli, "api", "call", "server.status" }, { timeout = 5 })
+  local s = r and r.ok and rex.json.decode(r.stdout)
+  return s and s.tailscale and s.tailscale.https and s.tailscale.https.url
 end
 
--- The picker over ctx's pane; mode "jump" is the ace-jump variant.
+-- The picker over ctx's pane; mode "jump" is the ace-jump variant. ctx.server is set
+-- when the pane is on another host: the picker runs there.
 local function open_hints(ctx, mode)
   local view, err = rex.session.view{}
   if view == nil then error(err, 0) end
@@ -74,7 +90,7 @@ local function open_hints(ctx, mode)
               cwd          = pane_folder(ctx),
               command      = { os.getenv("HOME") .. "/.config/rex/hints", ctx.session_id, ctx.block_id,
                                w.zoomed_block_id == ctx.block_id and "1" or "0", mode,
-                               on_other_machine(ctx) and "remote" or "local" },
+                               ctx.server and (own_address() or "remote") or "local" },
               path_prepend = { "/opt/homebrew/bin" },  -- where node is
               size         = size.columns and { columns = size.columns, rows = size.rows } or nil,
             },
@@ -110,9 +126,10 @@ node --test hints.test.js
 - F1–F4 can type a hint letter; the menu row covers a picked item on the last row; hint
   letters are misdrawn over an item starting with a combining mark or a wide character;
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
-- A pane on another Rex host runs the picker there, so its actions act on that machine:
-  Open is hidden (it would open out of sight), Copy runs that machine's `pbcopy`, and
-  the script must be installed there too.
+- A pane on another Rex host runs the picker there, so the script must be installed there
+  too, and its actions act on that machine: Copy runs its `pbcopy`, Edit opens its files.
+  Open sends http(s) URLs back to your Mac through `open_url` (that host's `rex` must reach
+  this server over Tailscale); for paths and file URLs it's hidden.
 
 ## License
 
