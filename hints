@@ -238,11 +238,13 @@ const prepare = (lines, cols, rows) =>
 
 const SHELL = "com.superlogical.terminal.shell";
 
-// The chosen action. `exec` is swapped in tests.
-function runAction(action, item, ctx, exec = run) {
+// The chosen action. `exec` and `write` are swapped in tests.
+function runAction(action, item, ctx, exec = run, write = (s) => process.stdout.write(s)) {
   const api = (method, body) =>
     exec("rex", ["api", "call", "-s", ctx.session, method, "-"], JSON.stringify({ session_id: ctx.session, ...body }));
-  if (action === "copy") return exec("pbcopy", [], item.text);
+  // OSC 52: the Rex app showing this pane copies, so a pane on another host
+  // copies onto the Mac you're at. Rex applies it only while it's frontmost.
+  if (action === "copy") return write(`\x1b]52;c;${Buffer.from(item.text).toString("base64")}\x07`);
   if (action === "move") {
     for (const a of ["press", "release"]) {
       api("block.event", { block_id: ctx.block, event: { type: "mouse", payload: { action: a, button: "left", x: item.col, y: item.row } } });

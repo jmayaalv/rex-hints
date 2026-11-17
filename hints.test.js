@@ -217,8 +217,12 @@ const shell = (command) => ({
   },
 });
 
-test("runAction copy puts the text on the clipboard", () => {
-  assert.deepEqual(record("copy", item({ text: "abc/d" })), [["pbcopy", [], "abc/d"]]);
+test("runAction copy asks the terminal to copy (OSC 52), running nothing", () => {
+  const writes = [];
+  const calls = [];
+  h.runAction("copy", item({ text: "abc/d é" }), ctx, (...c) => calls.push(c), (s) => writes.push(s));
+  assert.deepEqual(calls, []);
+  assert.deepEqual(writes, [`\x1b]52;c;${Buffer.from("abc/d é").toString("base64")}\x07`]);
 });
 
 test("runAction open: URLs as they are, paths resolved without :LINE", () => {

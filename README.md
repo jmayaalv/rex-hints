@@ -20,7 +20,8 @@ scrollback still opens in about 300 ms.
 ## Needs
 
 - Rex for macOS (tested with Preview 0.1.0 build 1853) and node 20+ (built-ins only).
-- macOS `pbcopy` and `open`.
+- macOS `open`. Copy goes through the terminal (OSC 52), so it lands on the clipboard of
+  the Mac running the Rex app.
 - Optional: [leaf](https://leaf.dipxsy.app) on `PATH`. Open then reads documents and pictures
   in leaf, placed the way its Rex plugin does (at an idle prompt, or in a pane beside).
   URLs still go to the browser.
@@ -131,7 +132,8 @@ node --test hints.test.js
   letters are misdrawn over an item starting with a combining mark or a wide character;
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
 - A pane on another Rex host runs the picker there, so the script must be installed there
-  too, and its actions act on that machine: Copy runs its `pbcopy`, Edit opens its files.
+  too, and its actions act on that machine: Edit opens its files. Copy still reaches your
+  Mac's clipboard (OSC 52).
   Open reads documents and pictures in leaf there when it's installed, sends http(s) URLs
   back to your Mac through `open_url` (that host's `rex` must reach this server over
   Tailscale), and is hidden for other paths.
