@@ -88,9 +88,9 @@ test("visibleScreen adds the blank rows the text format drops", () => {
   assert.deepEqual(h.visibleScreen("tial\nx\ny", "…\r\nx\r\ny", 2, true), ["x", "y"]);
 });
 
-test("visibleItems keeps what the picker shows", () => {
-  const items = [item({ row: 0 }), item({ row: 4 }), item({ row: 4, col: 17, text: "abcdefgh/x" })];
-  assert.deepEqual(h.visibleItems(items, 5, 20, 3).map((i) => [i.row, i.col]), [[4, 0]]);
+test("visibleItems keeps what the picker shows, clipped items too while their hint fits", () => {
+  const items = [item({ row: 0 }), item({ row: 4 }), item({ row: 4, col: 17, text: "abcdefgh/x" }), item({ row: 4, col: 19 })];
+  assert.deepEqual(h.visibleItems(items, 5, 20, 3).map((i) => [i.row, i.col]), [[4, 0], [4, 17]]);
 });
 
 test("decodeKeys names keys and drops sequences", () => {
@@ -390,4 +390,36 @@ test("render resets the hint's background and bold right after the hint letters"
   const after = raw.match(/a((?:\x1b\[[0-9;]*m)+)t/);
   assert.ok(after, "the hint letter is followed by styled text");
   assert.ok(after[1].includes("\x1b[0m"), JSON.stringify(after[1]));
+});
+
+// --- Paths broken at the pane's edge (Claude Code wraps long paths itself)
+
+const WRAPPED = ["  - Script: /tmp/s/sql/20261117-leftover", "    -PLL402875.up.sql", "next"];
+const EDGE = WRAPPED[0].length;
+
+test("findItems joins a path broken at the edge with the next row's run", () => {
+  assert.deepEqual(brief(h.findItems(WRAPPED, EDGE)), [["path", "/tmp/s/sql/20261117-leftover-PLL402875.up.sql", 0, 12]]);
+});
+
+test("findItems leaves a path that stops short of the edge alone", () => {
+  assert.deepEqual(brief(h.findItems(WRAPPED, EDGE + 1)), [["path", "/tmp/s/sql/20261117-leftover", 0, 12]]);
+});
+
+test("findItems: the joined run is no item of its own; trailing punctuation still goes", () => {
+  assert.deepEqual(brief(h.findItems(["x /a/b/c", "  d/e.md."], 8)), [["path", "/a/b/cd/e.md", 0, 2]]);
+  assert.deepEqual(brief(h.findItems(["x /a/b.", "md done"], 7)), [["path", "/a/b.md", 0, 2]]);
+  assert.deepEqual(brief(h.findItems(["x /a/b", "/c/d/e", "f.md"], 6)), [["path", "/a/b/c/d/ef.md", 0, 2]]);
+});
+
+test("a wrapped path shows its hint once and lights up its rest", () => {
+  const s = h.prepare(WRAPPED, EDGE, 3);
+  assert.equal(s.items.length, 1);
+  const raw = h.render(s, WRAPPED, EDGE, 3).split("\r\n");
+  assert.equal(strip(raw[1]), WRAPPED[1]);
+  assert.ok(raw[1].includes("\x1b[38;2;205;214;244m-"), JSON.stringify(raw[1]));
+});
+
+test("a floating picker narrower than its pane still joins and hints the broken path", () => {
+  const s = h.prepare(WRAPPED, EDGE - 2, 3, EDGE);
+  assert.deepEqual(brief(s.items), [["path", "/tmp/s/sql/20261117-leftover-PLL402875.up.sql", 0, 12]]);
 });

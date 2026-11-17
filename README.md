@@ -125,7 +125,9 @@ node --test hints.test.js
 
 ## Known limits
 
-- A URL that soft-wraps onto the next row becomes two items.
+- A URL that wraps onto the next row becomes two items. A path broken at the pane's edge
+  (Claude Code breaks long ones itself) is joined with the run that starts the next row,
+  so a path that ends exactly at the edge also takes the next row's first word.
 - Only the visible screen is hinted, not scrollback; a pane scrolled up in the app shows
   its live screen.
 - F1–F4 can type a hint letter; the menu row covers a picked item on the last row; hint

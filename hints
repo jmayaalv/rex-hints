@@ -34,22 +34,47 @@ function cellWidth(ch) {
 
 const cells = (s) => [...s].reduce((n, ch) => n + cellWidth(ch), 0);
 
-function findItems(lines) {
-  const items = [];
-  lines.forEach((line, row) => {
+// A path's run of characters at the start of a row, after its indent.
+const RUN = /^( *)([.\p{L}\p{M}\p{N}_\-~@\/:]+)/u;
+
+// The cells an item covers: its own, then the rows a broken path goes on in.
+const pieces = (i) => i.wrap ?? [{ row: i.row, col: i.col, width: cells(i.text) }];
+
+// `cols`, the pane's width: Claude Code breaks a long path at the pane's edge
+// and goes on at the next row's start, indented, so a path reaching the edge
+// takes that run (and the next while it reaches the edge too).
+// shortcut: a path that ends exactly at the edge takes the next row's first word; rare.
+function findItems(lines, cols) {
+  const rows = lines.map((line) => {
     const found = [];
     for (const [kind, priority, re] of PATTERNS) {
       for (const m of line.matchAll(re)) {
         const text = m[0].replace(TRAILING, "");
-        if (text && (kind !== "path" || text.includes("/"))) found.push({ kind, priority, start: m.index, end: m.index + text.length, text });
+        if (text && (kind !== "path" || text.includes("/"))) found.push({ kind, priority, start: m.index, end: m.index + text.length, text, raw: m[0] });
       }
     }
     found.sort((a, b) => a.priority - b.priority || a.start - b.start);
     const kept = [];
     for (const f of found) if (!kept.some((k) => f.start < k.end && k.start < f.end)) kept.push(f);
-    for (const k of kept) items.push({ row, col: cells(line.slice(0, k.start)), text: k.text, kind: k.kind });
+    return kept.map((k) => ({ col: cells(line.slice(0, k.start)), text: k.text, kind: k.kind, raw: k.raw }));
   });
-  return items.sort((a, b) => a.row - b.row || a.col - b.col);
+  rows.forEach((kept, row) => kept.forEach((item) => {
+    if (item.kind !== "path" || !cols) return;
+    let raw = item.raw, piece = { row, col: item.col, width: cells(raw) };
+    const wrap = [piece];
+    for (let m; piece.col + piece.width === cols && (m = lines[piece.row + 1]?.match(RUN));) {
+      const next = { row: piece.row + 1, col: m[1].length, width: cells(m[2]) };
+      rows[next.row] = rows[next.row].filter((o) => o.col >= next.col + next.width || o.col + cells(o.text) <= next.col);
+      wrap.push(piece = next);
+      raw += m[2];
+    }
+    if (wrap.length === 1) return;
+    item.text = raw.replace(TRAILING, "");
+    piece.width -= cells(raw) - cells(item.text);
+    item.wrap = wrap;
+  }));
+  return rows.flatMap((kept, row) => kept.map(({ raw, ...item }) => ({ row, ...item })))
+    .sort((a, b) => a.row - b.row || a.col - b.col);
 }
 
 function assignHints(items) {
@@ -102,10 +127,12 @@ function visibleScreen(textTail, vtTail, rows, truncated) {
   return lines.concat(Array(blank).fill("")).slice(-rows);
 }
 
-// Items the picker shows: within its last `rows` lines and its `cols` cells.
+// Items the picker shows: within its last `rows` lines, with room in its `cols`
+// cells for a two-letter hint. A floating picker is 2 columns narrower than its
+// pane, so an item reaching the pane's edge shows clipped; it acts whole.
 function visibleItems(items, lineCount, cols, rows) {
   const first = Math.max(0, lineCount - rows);
-  return items.filter((i) => i.row >= first && i.col + cells(i.text) <= cols);
+  return items.filter((i) => i.row >= first && i.col + 2 <= cols);
 }
 
 function decodeKeys(chunk) {
@@ -176,17 +203,17 @@ const DIM = RESET + rgb("#6c7086"), MATCH = RESET + rgb("#cdd6f4"), HINT = RESET
 const PICKED = RESET + rgb("#ffd60a") + rgb("#3d3200", true); // the picked item: muted, the hint letters stay bright
 const MENU = { copy: "copy c/⏎", open: "open o", edit: "edit e", tab: "tab t", move: "move m" };
 
-// One row: dim text, bright items, hint letters over an item's first cells.
-function renderRow(line, items, state, cols) {
+// Screen row `row`: dim text, bright items, hint letters over an item's first cells.
+function renderRow(line, row, items, state, cols) {
   let out = "", at = 0;
   for (const ch of line) {
     const w = cellWidth(ch);
     if (at + w > cols) break;
-    const it = items.find((i) => at >= i.col && at < i.col + cells(i.text));
+    const it = items.find((i) => pieces(i).some((p) => p.row === row && at >= p.col && at < p.col + p.width));
     let style = DIM, text = ch;
     if (it && state.picked === it) style = PICKED;
     else if (it && it.hint.startsWith(state.typed) && !state.picked) {
-      const k = at - it.col;
+      const k = row === it.row ? at - it.col : Infinity;
       if (k < it.hint.length) [style, text] = [HINT, it.hint[k]];
       else style = MATCH;
     }
@@ -200,7 +227,7 @@ function render(state, lines, cols, rows) {
   const first = Math.max(0, lines.length - rows);
   const shown = lines.slice(first);
   while (shown.length < rows) shown.push("");
-  const out = shown.map((line, r) => renderRow(line, state.items.filter((i) => i.row === first + r), state, cols));
+  const out = shown.map((line, r) => renderRow(line, first + r, state.items, state, cols));
   const note = (text) => HINT + text.slice(0, cols) + RESET;
   if (!state.items.length && state.mode !== "jump") out[0] = note(" No items here — any key closes");
   if (state.notice) out[rows - 1] = note(state.notice);
@@ -232,9 +259,10 @@ function readTail(call, format, bytes) {
     offset += Buffer.byteLength(b.data);
   }
 }
-// The picker's starting state: hints on the items a cols x rows picker shows.
-const prepare = (lines, cols, rows) =>
-  initialState(assignHints(visibleItems(findItems(lines), lines.length, cols, rows)));
+// The picker's starting state: hints on the items a cols x rows picker shows;
+// `width`, the source pane's, is where long paths break.
+const prepare = (lines, cols, rows, width = cols) =>
+  initialState(assignHints(visibleItems(findItems(lines, width), lines.length, cols, rows)));
 
 const SHELL = "com.superlogical.terminal.shell";
 
@@ -287,7 +315,7 @@ function main() {
     const size = call("size");
     const text = tail("text", size.rows * (size.columns * 4 + 1));
     lines = visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated);
-    state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows), where: { remote, viewer, leaf: Boolean(leaf) } };
+    state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows, size.columns), where: { remote, viewer, leaf: Boolean(leaf) } };
   };
   const restore = () => {
     out.write("\x1b[?7h\x1b[?25h\x1b[?1049l");
