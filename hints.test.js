@@ -504,7 +504,7 @@ test("init.lua: require(\"rex-hints\").setup{} defines the actions, binds the ke
   catch (e) { if (e.code === "ENOENT") return t.skip("no rex on PATH"); throw e; }
   const r = JSON.parse(out);
   assert.deepEqual(r.diagnostics, []);
-  assert.equal(r.bindings, 1); // jump = false leaves ctrl+cmd+j unbound
+  assert.equal(r.bindings, 1); // jump = false leaves super+ctrl+j unbound
   const titles = Object.fromEntries(r.actions.map((a) => [a.name, a.title]));
   assert.deepEqual(Object.keys(titles), ["open_url", "hints", "jump", "script"]);
   assert.equal(titles.script, path.join(dir, "rex-hints", "hints"));

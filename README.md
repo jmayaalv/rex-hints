@@ -5,13 +5,13 @@ ace-jump style. No mouse needed to grab or reach what's on screen.
 
 ![Hints over a Rex pane: each git hash, path, URL, UUID and IP address gets a letter](screenshots/hints.png)
 
-- **Hints** (`shift+cmd+j`): every URL, file path (with `:LINE:COL`), git hash, UUID and
+- **Hints** (`super+shift+j`): every URL, file path (with `:LINE:COL`), git hash, UUID and
   IPv4 address on the focused pane gets a one- or two-letter hint. Type the hint, then:
   `c` (or Enter) copy · `o` open (URLs in the browser; PDF, EPUB, Markdown and pictures in
   [leaf](https://leaf.dipxsy.app) when it's installed; the rest with `open`) ·
   `e` edit in a split on the right · `t` edit in a new tab (Emacs or vim, see below) ·
   `m` move (click there). The menu only offers what fits the item.
-- **Jump** (`ctrl+cmd+j`): ace-jump. Type a word's first character (any case), then the
+- **Jump** (`super+ctrl+j`): ace-jump. Type a word's first character (any case), then the
   hint on the word you want; the cursor goes there. One match jumps at once.
 
 | After `e`: the menu for that path | Jump, after `f`: a hint on each word starting with f |
@@ -49,7 +49,7 @@ echo 'require("rex-hints").setup()' >> ~/.config/rex/init.lua
 rex config reload
 ```
 
-That binds Hints to `shift+cmd+j` and Jump to `ctrl+cmd+j`. For other keys use
+That binds Hints to `super+shift+j` and Jump to `super+ctrl+j`. For other keys use
 `setup{ hints = "…", jump = "…" }`, with `false` to leave one unbound; `rex keymap` shows
 what's bound. `editor = "…"` sets the editor (see Needs). A clone somewhere else loads with `dofile("/path/to/rex-hints/init.lua").setup()`.
 To update: `git -C ~/.config/rex/rex-hints pull`, then `rex config reload`.

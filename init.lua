@@ -101,7 +101,7 @@ function M.setup(opts)
   rex.action{ name = "hints", title = "Hints: Copy, Open, Edit or Move…", run = function(ctx) open_hints(ctx, "items") end }
   rex.action{ name = "jump", title = "Jump to a Word…", run = function(ctx) open_hints(ctx, "jump") end }
 
-  local hints, jump = opts.hints == nil and "shift+cmd+j" or opts.hints, opts.jump == nil and "ctrl+cmd+j" or opts.jump
+  local hints, jump = opts.hints == nil and "super+shift+j" or opts.hints, opts.jump == nil and "super+ctrl+j" or opts.jump
   if hints then rex.bind(hints, "hints") end
   if jump then rex.bind(jump, "jump") end
 end
