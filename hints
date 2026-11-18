@@ -127,6 +127,15 @@ function visibleScreen(textTail, vtTail, rows, truncated) {
   return lines.concat(Array(blank).fill("")).slice(-rows);
 }
 
+// The rows the picker shows, a row fewer than its pane has (a floating layer's
+// frame takes one): it shows the last `rows` lines, so drop blank rows at the
+// bottom first and a short screen keeps its top row.
+function fitRows(lines, rows) {
+  let n = lines.length;
+  while (n > rows && !lines[n - 1].trim()) n--;
+  return lines.slice(0, n);
+}
+
 // Items the picker shows: within its last `rows` lines, with room in its `cols`
 // cells for a two-letter hint. A floating picker is 2 columns narrower than its
 // pane, so an item reaching the pane's edge shows clipped; it acts whole.
@@ -360,7 +369,7 @@ function main() {
   const load = () => {
     const size = call("size");
     const text = tail("text", size.rows * (size.columns * 4 + 1));
-    lines = visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated);
+    lines = fitRows(visibleScreen(text.text, tail("vt", 4 * size.rows + 64).text, size.rows, text.truncated), out.rows);
     state = { ...(mode === "jump" ? prepareJump : prepare)(lines, out.columns, out.rows, size.columns), where: { remote, viewer, leaf: Boolean(leaf) } };
   };
   const restore = () => {
@@ -415,7 +424,7 @@ function main() {
 
 module.exports = {
   findItems, cellWidth, assignHints, actionsFor, parseTarget,
-  visibleScreen, visibleItems, decodeKeys, initialState, step, render, runAction, readTail, prepare,
+  visibleScreen, fitRows, visibleItems, decodeKeys, initialState, step, render, runAction, readTail, prepare,
   findWords, prepareJump, promptOf, arrowsTo, editCommand,
 };
 

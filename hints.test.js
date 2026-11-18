@@ -509,3 +509,21 @@ test("init.lua: require(\"rex-hints\").setup{} defines the actions, binds the ke
   assert.deepEqual(Object.keys(titles), ["open_url", "hints", "jump", "script"]);
   assert.equal(titles.script, path.join(dir, "rex-hints", "hints"));
 });
+
+// --- The picker is a row shorter than its pane (a floating layer's frame takes one)
+
+test("fitRows drops blank rows at the bottom first, so a short screen keeps its top row", () => {
+  assert.deepEqual(h.fitRows(["a", "b", "", "  "], 3), ["a", "b", ""]);
+  assert.deepEqual(h.fitRows(["a", "b", "c"], 2), ["a", "b", "c"]); // full: render drops the top
+  assert.deepEqual(h.fitRows(["a", "", "b", ""], 2), ["a", "", "b"]);
+  assert.deepEqual(h.fitRows(["a", ""], 5), ["a", ""]);
+});
+
+test("a path on a cleared screen's top row gets its hint in a picker a row short", () => {
+  const screen = ["/tmp/x/edit.txt:3:5", "", "~ ❯", ...Array(30).fill("")];
+  const lines = h.fitRows(screen, 32);
+  const s = h.prepare(lines, 194, 32, 196);
+  assert.ok(s.items.some((i) => i.row === 0 && i.hint), "the top row's path has a hint");
+  assert.match(frameRows(h.render(s, lines, 194, 32))[0], /tmp\/x\/edit\.txt/);
+});
+

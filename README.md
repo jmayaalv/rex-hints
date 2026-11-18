@@ -69,7 +69,9 @@ node --test hints.test.js
   (Claude Code breaks long ones itself) is joined with the run that starts the next row,
   so a path that ends exactly at the edge also takes the next row's first word.
 - Only the visible screen is hinted, not scrollback; a pane scrolled up in the app shows
-  its live screen.
+  its live screen. The picker is a row shorter than its pane (a floating layer's frame
+  takes one): it drops a blank row at the bottom first, so when the pane's last row holds
+  text, its top row gets no hint.
 - F1–F4 can type a hint letter; the menu row covers a picked item on the last row; hint
   letters are misdrawn over an item starting with a combining mark or a wide character;
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
