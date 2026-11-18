@@ -278,6 +278,42 @@ test("runAction move clicks the item's first cell, press then release", () => {
   }
 });
 
+// --- Jump/Move at a shell prompt: arrow keys, since a shell takes no clicks
+
+const modes = (screen, mouse) => ({ screen, modes: [
+  { name: "mouse_event_normal", set: mouse }, { name: "mouse_event_any", set: false }, { name: "wraparound", set: true },
+] });
+
+test("promptOf reads the cursor of a primary screen that takes no clicks", () => {
+  const lines = ["out", " ❯ echo hi"];
+  assert.deepEqual(h.promptOf("\r\n\x1b[2;11H", modes("primary", false), lines), { row: 1, col: 10, line: " ❯ echo hi" });
+  assert.equal(h.promptOf("\x1b[2;11H", modes("primary", true), lines), undefined);    // the program takes clicks
+  assert.equal(h.promptOf("\x1b[2;11H", modes("alternate", false), lines), undefined); // a full-screen program
+  assert.equal(h.promptOf("no cursor", modes("primary", false), lines), undefined);
+});
+
+test("arrowsTo counts characters, not cells, and blank cells past the text", () => {
+  assert.deepEqual(h.arrowsTo("❯ echo hello world", 18, 12), Array(6).fill("left"));
+  assert.deepEqual(h.arrowsTo("❯ echo hello world", 7, 12), Array(5).fill("right"));
+  assert.deepEqual(h.arrowsTo("❯ echo 日本 x", 12, 7), Array(3).fill("left")); // 日本 are 2 cells each
+  assert.deepEqual(h.arrowsTo("❯ ls", 6, 2), Array(4).fill("left"));          // 2 typed spaces after "ls"
+  assert.deepEqual(h.arrowsTo("❯ ls", 2, 2), []);
+});
+
+test("runAction move at a shell prompt sends arrow keys on the cursor's row, and clicks elsewhere", () => {
+  const prompt = { row: 4, col: 18, line: "❯ echo hello world" };
+  const calls = [];
+  h.runAction("move", item({ row: 4, col: 7 }), { ...ctx, prompt }, (...c) => calls.push(c));
+  assert.deepEqual(calls, [["rex", ["send-key", "-s", S, "-b", B, ...Array(11).fill("left")]]]);
+  const elsewhere = [];
+  h.runAction("move", item({ row: 2, col: 7 }), { ...ctx, prompt }, (...c) => elsewhere.push(c));
+  assert.equal(elsewhere.length, 2);
+  assert.equal(JSON.parse(elsewhere[0][2]).event.type, "mouse");
+  const none = [];
+  h.runAction("move", item({ row: 4, col: 18 }), { ...ctx, prompt }, (...c) => none.push(c));
+  assert.deepEqual(none, []);
+});
+
 // --- e2e finding: blob_read answers with `data`, not `content`
 
 test("readTail reads a large output's tail from blob_read's data", () => {

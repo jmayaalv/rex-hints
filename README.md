@@ -34,7 +34,9 @@ scrollback still opens in about 300 ms.
 - For edit: a zsh function `ec` in your interactive shell that opens files in a terminal
   Emacs, e.g. `ec() { emacsclient -t "$@"; }`. It's called as `ec +LINE:COL FILE`.
 - Move and Jump send a mouse click, so they move the cursor in programs that take clicks
-  (Emacs with `xterm-mouse-mode`, vim, most TUIs). A plain shell prompt ignores them.
+  (Emacs with `xterm-mouse-mode`, vim, most TUIs). A shell prompt takes no clicks, so
+  there they press the arrow keys instead, for a target on the cursor's row (the command
+  you're typing); elsewhere on a shell's screen they do nothing.
 
 ## Install
 
