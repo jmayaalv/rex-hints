@@ -3,6 +3,8 @@
 Keyboard hints over a [Rex](https://www.superlogical.com/rex) pane, tmux-fingers and
 ace-jump style. No mouse needed to grab or reach what's on screen.
 
+![Hints over a Rex pane: each git hash, path, URL, UUID and IP address gets a letter](screenshots/hints.png)
+
 - **Hints** (`shift+cmd+j`): every URL, file path (with `:LINE:COL`), git hash, UUID and
   IPv4 address on the focused pane gets a one- or two-letter hint. Type the hint, then:
   `c` (or Enter) copy · `o` open (URLs in the browser; PDF, EPUB, Markdown and pictures in
@@ -11,6 +13,10 @@ ace-jump style. No mouse needed to grab or reach what's on screen.
   `m` move (click there). The menu only offers what fits the item.
 - **Jump** (`ctrl+cmd+j`): ace-jump. Type a word's first character (any case), then the
   hint on the word you want; the cursor goes there. One match jumps at once.
+
+| After `e`: the menu for that path | Jump, after `f`: a hint on each word starting with f |
+| --- | --- |
+| ![The action menu for a picked path: copy, open, edit, tab, move](screenshots/menu.png) | ![Jump mode: hints on every word that starts with f](screenshots/jump.png) |
 
 Escape cancels, Backspace takes back a letter. The picker is a floating pane laid exactly
 over the source pane, showing its visible screen dimmed with the hints on top (plain text,
