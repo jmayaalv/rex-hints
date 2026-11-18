@@ -13,7 +13,6 @@ local M = {}
 
 local terminal = "com.superlogical.terminal"
 local editor = ""  -- setup's; empty: ec or vim
--- A pane on another host runs the picker there, so it needs this same path there.
 local HINTS = debug.getinfo(1, "S").source:gsub("^@", ""):match("^(.*)/") .. "/hints"
 M.script = HINTS
 
@@ -47,6 +46,18 @@ local function open_hints(ctx, mode)
       local rect = layer.layout and find_rect(layer.layout, ctx.block_id)
       if rect then
         local size = rex.block.call(terminal, "size", { block_id = ctx.block_id }) or {}
+        -- A pane on another host runs the picker there: send it this copy's code,
+        -- so that host needs node but not rex-hints.
+        local command = { HINTS }
+        if ctx.server then
+          local f = assert(io.open(HINTS))
+          command = { "/usr/bin/env", "node", "-e", f:read("*a"), "hints" }
+          f:close()
+        end
+        for _, a in ipairs({ ctx.session_id, ctx.block_id, w.zoomed_block_id == ctx.block_id and "1" or "0", mode,
+                             ctx.server and (own_address() or "remote") or "local", editor }) do
+          command[#command + 1] = a
+        end
         local _, e = rex.session.new_layer{
           window_id = w.window_id,
           bounds    = rect,  -- layout rects are window fractions in every layer
@@ -56,9 +67,7 @@ local function open_hints(ctx, mode)
             label   = "hints",
             options = {
               cwd          = pane_folder(ctx),
-              command      = { HINTS, ctx.session_id, ctx.block_id,
-                               w.zoomed_block_id == ctx.block_id and "1" or "0", mode,
-                               ctx.server and (own_address() or "remote") or "local", editor },
+              command      = command,
               path_prepend = { "/opt/homebrew/bin" },  -- where node is
               size         = size.columns and { columns = size.columns, rows = size.rows } or nil,
             },

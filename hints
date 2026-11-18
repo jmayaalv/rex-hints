@@ -428,4 +428,6 @@ module.exports = {
   findWords, prepareJump, promptOf, arrowsTo, editCommand,
 };
 
-if (require.main === module) main();
+// The program: run as a file, or as `node -e CODE hints ARGS` (how init.lua starts
+// it on another host).
+if (require.main === module || module.id === "[eval]") main();

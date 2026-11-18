@@ -527,3 +527,13 @@ test("a path on a cleared screen's top row gets its hint in a picker a row short
   assert.match(frameRows(h.render(s, lines, 194, 32))[0], /tmp\/x\/edit\.txt/);
 });
 
+// --- A pane on another host gets the script's code: node -e CODE hints ARGS...
+
+test("node -e with the script's code starts the picker", () => {
+  const { spawnSync } = require("node:child_process");
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "hints"), "utf8");
+  // Without a terminal it stops at raw mode, after entering the alternate screen.
+  const r = spawnSync(process.execPath, ["-e", src, "hints", "session:s", "block:b", "0", "items", "remote"],
+    { input: "", timeout: 3000, encoding: "utf8" });
+  assert.ok(r.stdout.startsWith("\x1b[?1049h"), JSON.stringify(r.stdout.slice(0, 80)));
+});

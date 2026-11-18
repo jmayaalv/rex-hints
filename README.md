@@ -75,9 +75,10 @@ node --test hints.test.js
 - F1–F4 can type a hint letter; the menu row covers a picked item on the last row; hint
   letters are misdrawn over an item starting with a combining mark or a wide character;
   an emoji with VS16 (⚠️) counts as one cell, so Move after it lands one cell left.
-- A pane on another Rex host runs the picker there, so rex-hints must be cloned there too,
-  at the same path, and its actions act on that machine: Edit opens its files. Copy still
-  reaches your Mac's clipboard (OSC 52).
+- A pane on another Rex host runs the picker there (Rex runs a pane on its session's host).
+  This Mac sends it the script's code, so that host needs node 20+ but not rex-hints. Its
+  actions act on that machine: Edit opens its files. Copy still reaches your Mac's
+  clipboard (OSC 52).
   Open reads documents and pictures in leaf there when it's installed, sends http(s) URLs
   back to your Mac through `open_url` (that host's `rex` must reach this server over
   Tailscale), and is hidden for other paths.
