@@ -1,4 +1,4 @@
-// Tests for ~/.config/rex/hints: node --test ~/.config/rex/hints.test.js
+// Tests for hints and init.lua: node --test hints.test.js
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const h = require("./hints");
@@ -212,7 +212,7 @@ function record(action, it) {
 }
 const shell = (command) => ({
   block: {
-    flavor: "com.superlogical.terminal.shell", label: "ec",
+    flavor: "com.superlogical.terminal.shell", label: "edit",
     options: { cwd: "/r", shell: "none", command, path_prepend: ["/opt/homebrew/bin"] },
   },
 });
@@ -247,24 +247,53 @@ test("runAction open with leaf places the files leaf reads; URLs and the rest op
   assert.deepEqual(run(item({ text: "src/a.js" })), ["open", ["/r/src/a.js"]]);
 });
 
-test("runAction edit opens ec in a split on the right, at the line", () => {
+// The default editor: the shell's `ec` if it has one, else vim.
+const byDefault = (file, ec, vim) => ["/bin/zsh", "-ic", 'if whence ec >/dev/null; then ec ${2:+"$2"} "$1"; else vim ${3:+"$3"} "$1"; fi', "edit", file, ec, vim];
+
+test("runAction edit opens the editor in a split on the right, at the line", () => {
   const calls = record("edit", item({ text: "src/a.js:12:5" }));
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 2), ["rex", ["api", "call", "-s", S, "session.new_split", "-"]]);
   assert.deepEqual(JSON.parse(calls[0][2]), {
     session_id: S, anchor_id: B, direction: "horizontal", side: "after", focus: true,
-    layout: shell(["/bin/zsh", "-ic", 'ec "$@"', "ec", "+12:5", "/r/src/a.js"]),
+    layout: shell(byDefault("/r/src/a.js", "+12:5", "+call cursor(12,5)")),
   });
   const plain = JSON.parse(record("edit", item({ text: "src/a.js" }))[0][2]);
-  assert.deepEqual(plain.layout.block.options.command.slice(-2), ["ec", "/r/src/a.js"]);
+  assert.deepEqual(plain.layout.block.options.command, byDefault("/r/src/a.js", "", ""));
 });
 
-test("runAction tab opens ec in a new window", () => {
+test("runAction tab opens the editor in a new window", () => {
   const calls = record("tab", item({ text: "src/a.js:12" }));
   assert.deepEqual(calls[0].slice(0, 2), ["rex", ["api", "call", "-s", S, "session.new_window", "-"]]);
   assert.deepEqual(JSON.parse(calls[0][2]), {
-    session_id: S, focus: true, layout: shell(["/bin/zsh", "-ic", 'ec "$@"', "ec", "+12", "/r/src/a.js"]),
+    session_id: S, focus: true, layout: shell(byDefault("/r/src/a.js", "+12", "+call cursor(12,1)")),
   });
+});
+
+test("editCommand: a configured editor gets the line the way it reads it", () => {
+  const t = { file: "/r/a.js", line: 12, col: 5 };
+  const run = (editor, at = t) => h.editCommand(editor, at).slice(2);
+  assert.deepEqual(run("nvim"), ['nvim "$@"', "edit", "+call cursor(12,5)", "/r/a.js"]);
+  assert.deepEqual(run("/opt/homebrew/bin/vim"), ['/opt/homebrew/bin/vim "$@"', "edit", "+call cursor(12,5)", "/r/a.js"]);
+  assert.deepEqual(run("emacsclient -t"), ['emacsclient -t "$@"', "edit", "+12:5", "/r/a.js"]);
+  assert.deepEqual(run("nano"), ['nano "$@"', "edit", "+12", "/r/a.js"]);
+  assert.deepEqual(run("nvim", { file: "/r/a.js" }), ['nvim "$@"', "edit", "/r/a.js"]);
+});
+
+test("editCommand's default runs ec when the shell has it, else vim", () => {
+  const { execFileSync } = require("node:child_process");
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "rex-hints-bin-"));
+  fs.writeFileSync(path.join(bin, "vim"), '#!/bin/sh\nprintf "vim"; printf " [%s]" "$@"\n', { mode: 0o755 });
+  const [, , script, ...args] = h.editCommand(undefined, { file: "/r/a b.js", line: 12, col: 5 });
+  // -f: no zshrc; the test defines ec itself, as zshrc would.
+  const zsh = (pre, a = args) => execFileSync("/bin/zsh", ["-fc", pre + script, ...a], { encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` } });
+  try {
+    assert.equal(zsh('ec() { printf "ec"; printf " [%s]" "$@"; }; '), "ec [+12:5] [/r/a b.js]");
+    assert.equal(zsh(""), "vim [+call cursor(12,5)] [/r/a b.js]");
+    const [, , , ...plain] = h.editCommand(undefined, { file: "/r/a.js" });
+    assert.equal(zsh("", plain), "vim [/r/a.js]");
+  } finally { fs.rmSync(bin, { recursive: true }); }
 });
 
 test("runAction move clicks the item's first cell, press then release", () => {
@@ -458,4 +487,25 @@ test("a wrapped path shows its hint once and lights up its rest", () => {
 test("a floating picker narrower than its pane still joins and hints the broken path", () => {
   const s = h.prepare(WRAPPED, EDGE - 2, 3, EDGE);
   assert.deepEqual(brief(s.items), [["path", "/tmp/s/sql/20261117-leftover-PLL402875.up.sql", 0, 12]]);
+});
+
+// --- init.lua, loaded the way Rex loads it (skipped without the rex CLI)
+
+test("init.lua: require(\"rex-hints\").setup{} defines the actions, binds the keys, finds the script", (t) => {
+  const { execFileSync } = require("node:child_process");
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rex-hints-"));
+  t.after(() => fs.rmSync(dir, { recursive: true }));
+  fs.symlinkSync(__dirname, path.join(dir, "rex-hints"));
+  fs.writeFileSync(path.join(dir, "init.lua"), 'local m = require("rex-hints")\nm.setup{ jump = false }\n'
+    + 'rex.action{ name = "script", title = m.script, run = function() end }\n');
+  let out;
+  try { out = execFileSync("rex", ["config", "check", "--json", path.join(dir, "init.lua")], { encoding: "utf8" }); }
+  catch (e) { if (e.code === "ENOENT") return t.skip("no rex on PATH"); throw e; }
+  const r = JSON.parse(out);
+  assert.deepEqual(r.diagnostics, []);
+  assert.equal(r.bindings, 1); // jump = false leaves ctrl+cmd+j unbound
+  const titles = Object.fromEntries(r.actions.map((a) => [a.name, a.title]));
+  assert.deepEqual(Object.keys(titles), ["open_url", "hints", "jump", "script"]);
+  assert.equal(titles.script, path.join(dir, "rex-hints", "hints"));
 });

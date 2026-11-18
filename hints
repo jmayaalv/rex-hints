@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Rex hints: hint letters over the URLs, paths, hashes, UUIDs and IPs on a
-// pane's screen; type a hint, then c copy, o open, e edit (ec in a split),
+// pane's screen; type a hint, then c copy, o open, e edit (in a split),
 // t edit in a tab, m move (a click). Mode "jump" is ace-jump: a word's first
 // character, then its hint. Runs in a floating Rex pane; see README.md.
-// Usage: hints SESSION BLOCK ZOOMED(1|0) [items|jump] [local|remote|VIEWER], remote
-// (or the viewer's Rex server address) when the viewer's Rex app is on another
-// machine. Tests: node --test hints.test.js
+// Usage: hints SESSION BLOCK ZOOMED(1|0) [items|jump] [local|remote|VIEWER] [EDITOR],
+// remote (or the viewer's Rex server address) when the viewer's Rex app is on
+// another machine; EDITOR for edit and tab (by default `ec` or vim). Tests: node --test hints.test.js
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
@@ -290,6 +290,23 @@ function arrowsTo(line, from, to) {
   return Array(n).fill(from < to ? "right" : "left");
 }
 
+// The line argument `editor` (its command's name) reads: Emacs +LINE:COL, vim a
+// cursor() call, anything else +LINE.
+function editorAt(editor, t) {
+  if (!t.line) return [];
+  const name = path.basename(editor.split(" ")[0]);
+  if (/^(vi|vim|nvim)$/.test(name)) return [`+call cursor(${t.line},${t.col || 1})`];
+  return [/^(ec|emacs|emacsclient)$/.test(name) ? `+${t.line}${t.col ? `:${t.col}` : ""}` : `+${t.line}`];
+}
+// Edit and tab run `editor` (setup's), or else the shell's `ec` when it has one
+// (only the pane's host knows), else vim, in an interactive zsh so functions and
+// aliases work.
+function editCommand(editor, t) {
+  if (editor) return ["/bin/zsh", "-ic", `${editor} "$@"`, "edit", ...editorAt(editor, t), t.file];
+  return ["/bin/zsh", "-ic", 'if whence ec >/dev/null; then ec ${2:+"$2"} "$1"; else vim ${3:+"$3"} "$1"; fi', "edit",
+    t.file, editorAt("ec", t)[0] ?? "", editorAt("vim", t)[0] ?? ""];
+}
+
 // The chosen action. `exec` and `write` are swapped in tests.
 function runAction(action, item, ctx, exec = run, write = (s) => process.stdout.write(s)) {
   const api = (method, body) =>
@@ -319,23 +336,21 @@ function runAction(action, item, ctx, exec = run, write = (s) => process.stdout.
   // The viewer's init.lua defines open_url (see README.md).
   if (action === "open" && ctx.viewer && isWeb(item)) return exec("rex", ["-S", ctx.viewer, "do", "open_url", "--args", JSON.stringify({ url: item.text })]);
   if (action === "open") return exec("open", [item.kind === "url" ? item.text : parseTarget(item.text, ctx.cwd, ctx.home).file]);
-  // edit/tab: the owner's `ec` (a zsh function in zshrc.mac) through an interactive zsh.
   const t = parseTarget(item.text, ctx.cwd, ctx.home);
-  const at = t.line ? [`+${t.line}${t.col ? `:${t.col}` : ""}`] : [];
-  const layout = { block: { flavor: SHELL, label: "ec", options: {
-    cwd: ctx.cwd, shell: "none", command: ["/bin/zsh", "-ic", 'ec "$@"', "ec", ...at, t.file], path_prepend: ["/opt/homebrew/bin"],
+  const layout = { block: { flavor: SHELL, label: "edit", options: {
+    cwd: ctx.cwd, shell: "none", command: editCommand(ctx.editor, t), path_prepend: ["/opt/homebrew/bin"],
   } } };
   if (action === "edit") return api("session.new_split", { anchor_id: ctx.block, direction: "horizontal", side: "after", focus: true, layout });
   if (action === "tab") return api("session.new_window", { focus: true, layout });
 }
 
 function main() {
-  const [session, block, zoomed, mode, where] = process.argv.slice(2);
+  const [session, block, zoomed, mode, where, editor] = process.argv.slice(2);
   const remote = Boolean(where) && where !== "local";
   const viewer = remote && where !== "remote" ? where : undefined;
   const leaf = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, "leaf"))
     .find((file) => { try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; } });
-  const ctx = { session, block, cwd: process.cwd(), home: os.homedir(), viewer, leaf };
+  const ctx = { session, block, cwd: process.cwd(), home: os.homedir(), viewer, leaf, editor: editor || undefined };
   const { stdin, stdout: out } = process;
   const call = (method, args) => JSON.parse(run("rex", ["block", "call", "-s", session, "-b", block, method, JSON.stringify(args ?? {})]));
   const tail = (format, bytes, extra) => readTail(call, format, bytes, extra);
@@ -401,7 +416,7 @@ function main() {
 module.exports = {
   findItems, cellWidth, assignHints, actionsFor, parseTarget,
   visibleScreen, visibleItems, decodeKeys, initialState, step, render, runAction, readTail, prepare,
-  findWords, prepareJump, promptOf, arrowsTo,
+  findWords, prepareJump, promptOf, arrowsTo, editCommand,
 };
 
 if (require.main === module) main();
